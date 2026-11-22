@@ -1,0 +1,44 @@
+package becascript;
+import java_cup.runtime.Symbol;
+import java.util.ArrayList;
+
+parser code {:
+    public void syntax_error(Symbol token) {
+        var detail = token.value instanceof Main.Tok t ? "'" + t.text() + "'" : "fin del archivo";
+        throw new Main.Failure("Sintáctico", token.left, token.right, "Símbolo inesperado: " + detail);
+    }
+:};
+
+terminal Main.Tok ENTRADA, ENTERO, SI, SINO, MOSTRAR, Y, O, LP, RP, LB, RB, SEMI, GE, LE, EQ, NE, GT, LT, PLUS, MINUS, TIMES, ID, NUM, STR;
+non terminal Main.Program program;
+non terminal ArrayList inputs, statements;
+non terminal Main.Stmt statement;
+non terminal Main.Expr expr;
+precedence left O;
+precedence left Y;
+precedence nonassoc GE, LE, EQ, NE, GT, LT;
+precedence left PLUS, MINUS;
+precedence left TIMES;
+start with program;
+
+program ::= inputs:i statements:s {: RESULT = new Main.Program(i, s); :};
+inputs ::= inputs:i ENTRADA ENTERO ID:n SEMI {: i.add(n); RESULT = i; :}
+         | {: RESULT = new ArrayList(); :};
+statements ::= statements:s statement:t {: s.add(t); RESULT = s; :}
+             | {: RESULT = new ArrayList(); :};
+statement ::= SI LP expr:e RP LB statements:a RB SINO LB statements:b RB {: RESULT = new Main.Branch(e, a, b); :}
+            | MOSTRAR STR:s SEMI {: RESULT = new Main.Print(s.text().substring(1, s.text().length()-1)); :};
+expr ::= expr:a O:op expr:b {: RESULT = new Main.Binary(a, op, b); :}
+       | expr:a Y:op expr:b {: RESULT = new Main.Binary(a, op, b); :}
+       | expr:a GE:op expr:b {: RESULT = new Main.Binary(a, op, b); :}
+       | expr:a LE:op expr:b {: RESULT = new Main.Binary(a, op, b); :}
+       | expr:a EQ:op expr:b {: RESULT = new Main.Binary(a, op, b); :}
+       | expr:a NE:op expr:b {: RESULT = new Main.Binary(a, op, b); :}
+       | expr:a GT:op expr:b {: RESULT = new Main.Binary(a, op, b); :}
+       | expr:a LT:op expr:b {: RESULT = new Main.Binary(a, op, b); :}
+       | expr:a PLUS:op expr:b {: RESULT = new Main.Binary(a, op, b); :}
+       | expr:a MINUS:op expr:b {: RESULT = new Main.Binary(a, op, b); :}
+       | expr:a TIMES:op expr:b {: RESULT = new Main.Binary(a, op, b); :}
+       | LP expr:e RP {: RESULT = e; :}
+       | ID:n {: RESULT = new Main.Variable(n); :}
+       | NUM:n {: RESULT = new Main.NumberExpr(n); :};

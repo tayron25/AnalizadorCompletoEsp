@@ -1,0 +1,9 @@
+// Regla ficticia para la defensa
+entrada entero promedio;
+entrada entero asistencia;
+
+si (promedio >= (40 + 40) y asistencia >= 90) {
+    mostrar "Beca aprobada";
+} sino {
+    mostrar "Beca rechazada";
+}

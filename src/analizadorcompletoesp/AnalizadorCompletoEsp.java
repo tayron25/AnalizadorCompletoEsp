@@ -1,20 +1,8 @@
-/*
- * Click nbfs://nbhost/SystemFileSystem/Templates/Licenses/license-default.txt to change this license
- * Click nbfs://nbhost/SystemFileSystem/Templates/Classes/Main.java to edit this template
- */
 package analizadorcompletoesp;
 
-/**
- *
- * @author Tayron
- */
+/** Clase inicial de la plantilla de NetBeans. BecaScript arranca en becascript.Main. */
 public class AnalizadorCompletoEsp {
-
-    /**
-     * @param args the command line arguments
-     */
-    public static void main(String[] args) {
-        // TODO code application logic here
+    public static void main(String[] argumentos) {
+        // La aplicación se inicia desde la clase configurada en las propiedades de NetBeans.
     }
-    
 }

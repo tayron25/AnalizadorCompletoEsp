@@ -2,43 +2,48 @@ package becascript;
 import java_cup.runtime.Symbol;
 import java.util.ArrayList;
 
+// CUP llama a este método cuando el símbolo actual no encaja en la gramática.
 parser code {:
-    public void syntax_error(Symbol token) {
-        var detail = token.value instanceof Main.Tok t ? "'" + t.text() + "'" : "fin del archivo";
-        throw new Main.Failure("Sintáctico", token.left, token.right, "Símbolo inesperado: " + detail);
+    public void syntax_error(Symbol ficha) {
+        var detalle = ficha.value instanceof Main.Token nodo ? "'" + nodo.texto() + "'" : "fin del archivo";
+        throw new Main.ErrorCompilacion("Sintáctico", ficha.left, ficha.right, "Símbolo inesperado: " + detalle);
     }
 :};
 
-terminal Main.Tok ENTRADA, ENTERO, SI, SINO, MOSTRAR, Y, O, LP, RP, LB, RB, SEMI, GE, LE, EQ, NE, GT, LT, PLUS, MINUS, TIMES, ID, NUM, STR;
-non terminal Main.Program program;
-non terminal ArrayList inputs, statements;
-non terminal Main.Stmt statement;
-non terminal Main.Expr expr;
+// Los terminales son los tipos de token que entrega JFlex.
+terminal Main.Token ENTRADA, ENTERO, SI, SINO, MOSTRAR, Y, O, PARENTESIS_ABIERTO, PARENTESIS_CERRADO, LLAVE_ABIERTA, LLAVE_CERRADA, PUNTO_Y_COMA, MAYOR_O_IGUAL, MENOR_O_IGUAL, IGUAL, DISTINTO, MAYOR, MENOR, SUMA, RESTA, MULTIPLICACION, IDENTIFICADOR, LITERAL_ENTERO, CADENA;
+non terminal Main.Programa programa;
+non terminal ArrayList entradas, sentencias;
+non terminal Main.Sentencia sentencia;
+non terminal Main.Expresion expresion;
+// CUP ordena estas precedencias de menor a mayor.
 precedence left O;
 precedence left Y;
-precedence nonassoc GE, LE, EQ, NE, GT, LT;
-precedence left PLUS, MINUS;
-precedence left TIMES;
-start with program;
+precedence nonassoc MAYOR_O_IGUAL, MENOR_O_IGUAL, IGUAL, DISTINTO, MAYOR, MENOR;
+precedence left SUMA, RESTA;
+precedence left MULTIPLICACION;
+start with programa;
 
-program ::= inputs:i statements:s {: RESULT = new Main.Program(i, s); :};
-inputs ::= inputs:i ENTRADA ENTERO ID:n SEMI {: i.add(n); RESULT = i; :}
+// Cada acción de Java construye un nodo o agrega elementos al árbol.
+programa ::= entradas:declaraciones sentencias:lista {: RESULT = new Main.Programa(declaraciones, lista); :};
+entradas ::= entradas:declaraciones ENTRADA ENTERO IDENTIFICADOR:nombre PUNTO_Y_COMA {: declaraciones.add(nombre); RESULT = declaraciones; :}
          | {: RESULT = new ArrayList(); :};
-statements ::= statements:s statement:t {: s.add(t); RESULT = s; :}
+sentencias ::= sentencias:lista sentencia:nodo {: lista.add(nodo); RESULT = lista; :}
              | {: RESULT = new ArrayList(); :};
-statement ::= SI LP expr:e RP LB statements:a RB SINO LB statements:b RB {: RESULT = new Main.Branch(e, a, b); :}
-            | MOSTRAR STR:s SEMI {: RESULT = new Main.Print(s.text().substring(1, s.text().length()-1)); :};
-expr ::= expr:a O:op expr:b {: RESULT = new Main.Binary(a, op, b); :}
-       | expr:a Y:op expr:b {: RESULT = new Main.Binary(a, op, b); :}
-       | expr:a GE:op expr:b {: RESULT = new Main.Binary(a, op, b); :}
-       | expr:a LE:op expr:b {: RESULT = new Main.Binary(a, op, b); :}
-       | expr:a EQ:op expr:b {: RESULT = new Main.Binary(a, op, b); :}
-       | expr:a NE:op expr:b {: RESULT = new Main.Binary(a, op, b); :}
-       | expr:a GT:op expr:b {: RESULT = new Main.Binary(a, op, b); :}
-       | expr:a LT:op expr:b {: RESULT = new Main.Binary(a, op, b); :}
-       | expr:a PLUS:op expr:b {: RESULT = new Main.Binary(a, op, b); :}
-       | expr:a MINUS:op expr:b {: RESULT = new Main.Binary(a, op, b); :}
-       | expr:a TIMES:op expr:b {: RESULT = new Main.Binary(a, op, b); :}
-       | LP expr:e RP {: RESULT = e; :}
-       | ID:n {: RESULT = new Main.Variable(n); :}
-       | NUM:n {: RESULT = new Main.NumberExpr(n); :};
+// La sentencia si necesita las dos ramas. Sus bloques pueden contener otras sentencias.
+sentencia ::= SI PARENTESIS_ABIERTO expresion:condicion PARENTESIS_CERRADO LLAVE_ABIERTA sentencias:primero LLAVE_CERRADA SINO LLAVE_ABIERTA sentencias:segundo LLAVE_CERRADA {: RESULT = new Main.Condicional(condicion, primero, segundo); :}
+            | MOSTRAR CADENA:cadena PUNTO_Y_COMA {: RESULT = new Main.Mostrar(cadena.texto().substring(1, cadena.texto().length()-1)); :};
+expresion ::= expresion:primero O:operador expresion:segundo {: RESULT = new Main.OperacionBinaria(primero, operador, segundo); :}
+       | expresion:primero Y:operador expresion:segundo {: RESULT = new Main.OperacionBinaria(primero, operador, segundo); :}
+       | expresion:primero MAYOR_O_IGUAL:operador expresion:segundo {: RESULT = new Main.OperacionBinaria(primero, operador, segundo); :}
+       | expresion:primero MENOR_O_IGUAL:operador expresion:segundo {: RESULT = new Main.OperacionBinaria(primero, operador, segundo); :}
+       | expresion:primero IGUAL:operador expresion:segundo {: RESULT = new Main.OperacionBinaria(primero, operador, segundo); :}
+       | expresion:primero DISTINTO:operador expresion:segundo {: RESULT = new Main.OperacionBinaria(primero, operador, segundo); :}
+       | expresion:primero MAYOR:operador expresion:segundo {: RESULT = new Main.OperacionBinaria(primero, operador, segundo); :}
+       | expresion:primero MENOR:operador expresion:segundo {: RESULT = new Main.OperacionBinaria(primero, operador, segundo); :}
+       | expresion:primero SUMA:operador expresion:segundo {: RESULT = new Main.OperacionBinaria(primero, operador, segundo); :}
+       | expresion:primero RESTA:operador expresion:segundo {: RESULT = new Main.OperacionBinaria(primero, operador, segundo); :}
+       | expresion:primero MULTIPLICACION:operador expresion:segundo {: RESULT = new Main.OperacionBinaria(primero, operador, segundo); :}
+       | PARENTESIS_ABIERTO expresion:condicion PARENTESIS_CERRADO {: RESULT = condicion; :}
+       | IDENTIFICADOR:nombre {: RESULT = new Main.Variable(nombre); :}
+       | LITERAL_ENTERO:nombre {: RESULT = new Main.Numero(nombre); :};

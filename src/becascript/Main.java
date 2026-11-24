@@ -12,199 +12,219 @@ import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 
 public final class Main {
-    public record Tok(String text, int line, int column) {
-        String pos() { return line + ":" + column; }
+    // El lexer guarda el lexema y su ubicación para informar errores al usuario.
+    public record Token(String texto, int linea, int columna) {
+        String posicion() { return linea + ":" + columna; }
     }
-    public static final class Failure extends RuntimeException {
-        Failure(String phase, int line, int column, String message) {
-            super(phase + " (" + line + ":" + column + ") " + message);
+    public static final class ErrorCompilacion extends RuntimeException {
+        ErrorCompilacion(String fase, int linea, int columna, String mensaje) {
+            super(fase + " (" + linea + ":" + columna + ") " + mensaje);
         }
-        Failure(Tok token, String message) { this("Semántico", token.line(), token.column(), message); }
+        ErrorCompilacion(Token ficha, String mensaje) { this("Semántico", ficha.linea(), ficha.columna(), mensaje); }
     }
-    public record Program(List<Tok> inputs, List<Stmt> statements) {}
-    public sealed interface Stmt permits Branch, Print {}
-    public record Branch(Expr condition, List<Stmt> yes, List<Stmt> no) implements Stmt {}
-    public record Print(String message) implements Stmt {}
-    public sealed interface Expr permits Binary, Variable, NumberExpr {}
-    public record Binary(Expr left, Tok operator, Expr right) implements Expr {}
-    public record Variable(Tok token) implements Expr {}
-    public record NumberExpr(Tok token) implements Expr {}
+    // Estos nodos forman el árbol de sintaxis abstracta que devuelve CUP.
+    public record Programa(List<Token> entradas, List<Sentencia> sentencias) {}
+    public sealed interface Sentencia permits Condicional, Mostrar {}
+    public record Condicional(Expresion condicion, List<Sentencia> ramaSi, List<Sentencia> ramaSino) implements Sentencia {}
+    public record Mostrar(String mensaje) implements Sentencia {}
+    public sealed interface Expresion permits OperacionBinaria, Variable, Numero {}
+    public record OperacionBinaria(Expresion izquierda, Token operador, Expresion derecha) implements Expresion {}
+    public record Variable(Token ficha) implements Expresion {}
+    public record Numero(Token ficha) implements Expresion {}
 
-    record Ref(String name) {}
-    record Value(Class<?> type, Object operand) {}
-    record Quad(String op, Object a, Object b, String target) {
+    // Una referencia apunta a una entrada o a un temporal; los literales se guardan directamente.
+    record Referencia(String nombre) {}
+    record Valor(Class<?> tipo, Object operando) {}
+    record Cuadrupla(String operador, Object primero, Object segundo, String destino) {
         @Override public String toString() {
-            return "(" + op + ", " + show(a) + ", " + show(b) + ", " + show(target, false) + ")";
+            return "(" + operador + ", " + representar(primero) + ", " + representar(segundo) + ", " + representar(destino, false) + ")";
         }
-        private static String show(Object value) { return show(value, true); }
-        private static String show(Object value, boolean quoteStrings) {
-            return switch (value) {
+        private static String representar(Object valor) { return representar(valor, true); }
+        private static String representar(Object valor, boolean entrecomillar) {
+            return switch (valor) {
                 case null -> "–";
-                case Ref ref -> ref.name();
-                case String text -> quoteStrings ? "\"" + text + "\"" : text;
-                default -> value.toString();
+                case Referencia ref -> ref.nombre();
+                case String texto -> entrecomillar ? "\"" + texto + "\"" : texto;
+                default -> valor.toString();
             };
         }
     }
-    record Compilation(Program program, List<String> tokens, Map<String, Tok> symbols,
-                       List<Quad> plain, List<Quad> optimized) {}
+    record Eliminada(Cuadrupla original, Object reemplazo) {}
+    record Compilacion(Programa programa, List<String> tokens, Map<String, Token> simbolos,
+                       List<Cuadrupla> original, List<Cuadrupla> optimizado, List<Eliminada> eliminadas) {}
 
-    static String tokenName(int kind) {
-        for (var field : sym.class.getFields()) {
+    static String nombreToken(int tipoToken) {
+        for (var campo : sym.class.getFields()) {
             try {
-                if (field.getType() == int.class && field.getInt(null) == kind) return field.getName();
-            } catch (IllegalAccessException error) {
-                throw new IllegalStateException(error);
+                if (campo.getType() == int.class && campo.getInt(null) == tipoToken) return campo.getName();
+            } catch (IllegalAccessException excepcion) {
+                throw new IllegalStateException(excepcion);
             }
         }
-        throw new IllegalArgumentException("Token desconocido: " + kind);
+        throw new IllegalArgumentException("Token desconocido: " + tipoToken);
     }
 
-    static Compilation compile(String source) throws Exception {
-        var lexer = new Lexer(new StringReader(source));
-        var program = (Program) new Parser(lexer).parse().value;
-        var symbols = new LinkedHashMap<String, Tok>();
-        for (Tok input : program.inputs()) {
-            if (symbols.putIfAbsent(input.text(), input) != null) {
-                throw new Failure(input, "Entrada duplicada: " + input.text());
+    /** Analiza el texto, crea la tabla de símbolos y genera las dos versiones del código intermedio. */
+    static Compilacion compilar(String fuente) throws Exception {
+        var analizador = new Lexer(new StringReader(fuente));
+        var programa = (Programa) new Parser(analizador).parse().value;
+        var simbolos = new LinkedHashMap<String, Token>();
+        for (Token entrada : programa.entradas()) {
+            if (simbolos.putIfAbsent(entrada.texto(), entrada) != null) {
+                throw new ErrorCompilacion(entrada, "Entrada duplicada: " + entrada.texto());
             }
         }
-        return new Compilation(program, lexer.tokens, symbols,
-                new Generator(symbols, false).generate(program),
-                new Generator(symbols, true).generate(program));
+        // La identidad del nodo permite recuperar la cuádrupla exacta, incluso si se repite la expresión.
+        var originales = new IdentityHashMap<OperacionBinaria, Cuadrupla>();
+        var original = new Generador(simbolos, false, originales).generar(programa);
+        var optimizador = new Generador(simbolos, true, originales);
+        var optimizado = optimizador.generar(programa);
+        return new Compilacion(programa, analizador.tokens, simbolos, original, optimizado,
+                List.copyOf(optimizador.eliminadas));
     }
 
-    private static final class Generator {
-        private final Map<String, Tok> symbols;
-        private final boolean fold;
-        private final List<Quad> code = new ArrayList<>();
-        private int temp;
-        private int label;
+    /** Recorre el árbol, verifica los tipos y traduce las sentencias a cuádruplas. */
+    private static final class Generador {
+        private final Map<String, Token> simbolos;
+        private final boolean plegar;
+        private final List<Cuadrupla> codigo = new ArrayList<>();
+        private final Map<OperacionBinaria, Cuadrupla> originales;
+        private final List<Eliminada> eliminadas = new ArrayList<>();
+        private int temporal;
+        private int etiqueta;
 
-        Generator(Map<String, Tok> symbols, boolean fold) {
-            this.symbols = symbols;
-            this.fold = fold;
+        Generador(Map<String, Token> simbolos, boolean plegar, Map<OperacionBinaria, Cuadrupla> originales) {
+            this.simbolos = simbolos;
+            this.plegar = plegar;
+            this.originales = originales;
         }
 
-        List<Quad> generate(Program program) {
-            emit(program.statements());
-            return List.copyOf(code);
+        List<Cuadrupla> generar(Programa programa) {
+            emitir(programa.sentencias());
+            return List.copyOf(codigo);
         }
 
-        private void emit(List<Stmt> statements) {
-            for (Stmt statement : statements) {
-                switch (statement) {
-                    case Print print -> code.add(new Quad("MOSTRAR", print.message(), null, null));
-                    case Branch branch -> {
-                        Value condition = expression(branch.condition());
-                        if (condition.type() != Boolean.class) {
-                            throw new Failure(origin(branch.condition()), "La condición de si debe ser booleana");
+        private void emitir(List<Sentencia> sentencias) {
+            for (Sentencia sentencia : sentencias) {
+                switch (sentencia) {
+                    case Mostrar mostrar -> codigo.add(new Cuadrupla("MOSTRAR", mostrar.mensaje(), null, null));
+                    case Condicional condicional -> {
+                        Valor condicion = expresion(condicional.condicion());
+                        if (condicion.tipo() != Boolean.class) {
+                            throw new ErrorCompilacion(origen(condicional.condicion()), "La condición de si debe ser booleana");
                         }
-                        String otherwise = "L" + ++label;
-                        String end = "L" + ++label;
-                        code.add(new Quad("JF", condition.operand(), null, otherwise));
-                        emit(branch.yes());
-                        code.add(new Quad("SALTO", null, null, end));
-                        code.add(new Quad("ETIQUETA", null, null, otherwise));
-                        emit(branch.no());
-                        code.add(new Quad("ETIQUETA", null, null, end));
+                        String etiquetaSino = "L" + ++etiqueta;
+                        String etiquetaFin = "L" + ++etiqueta;
+                        // JF salta a la rama sino cuando la condición es falsa.
+                        codigo.add(new Cuadrupla("JF", condicion.operando(), null, etiquetaSino));
+                        emitir(condicional.ramaSi());
+                        codigo.add(new Cuadrupla("SALTO", null, null, etiquetaFin));
+                        codigo.add(new Cuadrupla("ETIQUETA", null, null, etiquetaSino));
+                        emitir(condicional.ramaSino());
+                        codigo.add(new Cuadrupla("ETIQUETA", null, null, etiquetaFin));
                     }
                 }
             }
         }
 
-        private Value expression(Expr expr) {
-            return switch (expr) {
-                case NumberExpr number -> {
+        private Valor expresion(Expresion expresion) {
+            return switch (expresion) {
+                case Numero numero -> {
                     try {
-                        yield new Value(Integer.class, Integer.parseInt(number.token().text()));
-                    } catch (NumberFormatException error) {
-                        throw new Failure(number.token(), "Entero fuera del rango de 32 bits");
+                        yield new Valor(Integer.class, Integer.parseInt(numero.ficha().texto()));
+                    } catch (NumberFormatException excepcion) {
+                        throw new ErrorCompilacion(numero.ficha(), "Entero fuera del rango de 32 bits");
                     }
                 }
                 case Variable variable -> {
-                    String name = variable.token().text();
-                    if (!symbols.containsKey(name)) {
-                        throw new Failure(variable.token(), "Entrada no declarada: " + name);
+                    String nombre = variable.ficha().texto();
+                    if (!simbolos.containsKey(nombre)) {
+                        throw new ErrorCompilacion(variable.ficha(), "Entrada no declarada: " + nombre);
                     }
-                    yield new Value(Integer.class, new Ref(name));
+                    yield new Valor(Integer.class, new Referencia(nombre));
                 }
-                case Binary binary -> {
-                    Value a = expression(binary.left());
-                    Value b = expression(binary.right());
-                    String op = binary.operator().text();
-                    boolean logical = op.equals("y") || op.equals("o");
-                    boolean arithmetic = op.equals("+") || op.equals("-") || op.equals("*");
-                    Class<?> expected = logical ? Boolean.class : Integer.class;
-                    if (a.type() != expected || b.type() != expected) {
-                        throw new Failure(binary.operator(), "Operandos incompatibles para " + op);
+                case OperacionBinaria operacion -> {
+                    Valor primero = expresion(operacion.izquierda());
+                    Valor segundo = expresion(operacion.derecha());
+                    String operador = operacion.operador().texto();
+                    boolean logica = operador.equals("y") || operador.equals("o");
+                    boolean aritmetica = operador.equals("+") || operador.equals("-") || operador.equals("*");
+                    Class<?> esperado = logica ? Boolean.class : Integer.class;
+                    if (primero.tipo() != esperado || segundo.tipo() != esperado) {
+                        throw new ErrorCompilacion(operacion.operador(), "Operandos incompatibles para " + operador);
                     }
-                    Class<?> result = arithmetic ? Integer.class : Boolean.class;
-                    if (fold && !(a.operand() instanceof Ref) && !(b.operand() instanceof Ref)) {
-                        yield new Value(result, calculate(op, a.operand(), b.operand()));
+                    Class<?> resultado = aritmetica ? Integer.class : Boolean.class;
+                    // Plegado de constantes: si ambos operandos ya se conocen, se reemplaza la operación por su resultado.
+                    if (plegar && !(primero.operando() instanceof Referencia) && !(segundo.operando() instanceof Referencia)) {
+                        Object reemplazo = calcular(operador, primero.operando(), segundo.operando());
+                        eliminadas.add(new Eliminada(originales.get(operacion), reemplazo));
+                        yield new Valor(resultado, reemplazo);
                     }
-                    String target = "$t" + ++temp;
-                    code.add(new Quad(op, a.operand(), b.operand(), target));
-                    yield new Value(result, new Ref(target));
+                    String destino = "$t" + ++temporal;
+                    var cuadrupla = new Cuadrupla(operador, primero.operando(), segundo.operando(), destino);
+                    codigo.add(cuadrupla);
+                    if (!plegar) originales.put(operacion, cuadrupla);
+                    yield new Valor(resultado, new Referencia(destino));
                 }
             };
         }
     }
 
-    private static Tok origin(Expr expr) {
-        return switch (expr) {
-            case Binary binary -> binary.operator();
-            case Variable variable -> variable.token();
-            case NumberExpr number -> number.token();
+    private static Token origen(Expresion expresion) {
+        return switch (expresion) {
+            case OperacionBinaria operacion -> operacion.operador();
+            case Variable variable -> variable.ficha();
+            case Numero numero -> numero.ficha();
         };
     }
 
-    static Object calculate(String op, Object a, Object b) {
-        return switch (op) {
-            case "+" -> (int) a + (int) b;
-            case "-" -> (int) a - (int) b;
-            case "*" -> (int) a * (int) b;
-            case ">" -> (int) a > (int) b;
-            case "<" -> (int) a < (int) b;
-            case ">=" -> (int) a >= (int) b;
-            case "<=" -> (int) a <= (int) b;
-            case "==" -> a.equals(b);
-            case "!=" -> !a.equals(b);
-            case "y" -> (boolean) a && (boolean) b;
-            case "o" -> (boolean) a || (boolean) b;
-            default -> throw new IllegalArgumentException("Operación desconocida: " + op);
+    static Object calcular(String operador, Object primero, Object segundo) {
+        return switch (operador) {
+            case "+" -> (int) primero + (int) segundo;
+            case "-" -> (int) primero - (int) segundo;
+            case "*" -> (int) primero * (int) segundo;
+            case ">" -> (int) primero > (int) segundo;
+            case "<" -> (int) primero < (int) segundo;
+            case ">=" -> (int) primero >= (int) segundo;
+            case "<=" -> (int) primero <= (int) segundo;
+            case "==" -> primero.equals(segundo);
+            case "!=" -> !primero.equals(segundo);
+            case "y" -> (boolean) primero && (boolean) segundo;
+            case "o" -> (boolean) primero || (boolean) segundo;
+            default -> throw new IllegalArgumentException("Operación desconocida: " + operador);
         };
     }
 
-    private static Object resolve(Object operand, Map<String,Object> memory) {
-        return operand instanceof Ref ref ? memory.get(ref.name()) : operand;
+    private static Object resolver(Object operando, Map<String,Object> memoria) {
+        return operando instanceof Referencia ref ? memoria.get(ref.nombre()) : operando;
     }
 
-    static String execute(List<Quad> code, Map<String,Integer> inputs) {
-        var memory = new HashMap<String,Object>(inputs);
-        var labels = new HashMap<String,Integer>();
-        for (int i = 0; i < code.size(); i++) {
-            if (code.get(i).op().equals("ETIQUETA")) labels.put(code.get(i).target(), i);
+    /** Interpreta las cuádruplas. Las etiquetas indican dónde continúan los saltos del programa. */
+    static String ejecutar(List<Cuadrupla> codigo, Map<String,Integer> entradas) {
+        var memoria = new HashMap<String,Object>(entradas);
+        var etiquetas = new HashMap<String,Integer>();
+        for (int indice = 0; indice < codigo.size(); indice++) {
+            if (codigo.get(indice).operador().equals("ETIQUETA")) etiquetas.put(codigo.get(indice).destino(), indice);
         }
-        var output = new StringJoiner("\n");
-        for (int pc = 0; pc < code.size(); pc++) {
-            Quad instruction = code.get(pc);
-            Object a = resolve(instruction.a(), memory);
-            switch (instruction.op()) {
+        var salida = new StringJoiner("\n");
+        for (int contadorPrograma = 0; contadorPrograma < codigo.size(); contadorPrograma++) {
+            Cuadrupla instruccion = codigo.get(contadorPrograma);
+            Object primero = resolver(instruccion.primero(), memoria);
+            switch (instruccion.operador()) {
                 case "JF" -> {
-                    if (!(boolean) a) pc = labels.get(instruction.target());
+                    if (!(boolean) primero) contadorPrograma = etiquetas.get(instruccion.destino());
                 }
-                case "SALTO" -> pc = labels.get(instruction.target());
+                case "SALTO" -> contadorPrograma = etiquetas.get(instruccion.destino());
                 case "ETIQUETA" -> { }
-                case "MOSTRAR" -> output.add((String) a);
-                default -> memory.put(instruction.target(),
-                        calculate(instruction.op(), a, resolve(instruction.b(), memory)));
+                case "MOSTRAR" -> salida.add((String) primero);
+                default -> memoria.put(instruccion.destino(),
+                        calcular(instruccion.operador(), primero, resolver(instruccion.segundo(), memoria)));
             }
         }
-        return output.toString();
+        return salida.toString();
     }
 
-    static final String EXAMPLE = """
+    static final String EJEMPLO = """
             // Regla ficticia para la defensa
             entrada entero promedio;
             entrada entero asistencia;
@@ -216,228 +236,299 @@ public final class Main {
             }
             """;
 
-    private static String tree(Program program) {
-        var result = new StringBuilder("Programa\n");
-        for (Tok input : program.inputs()) {
-            result.append("  Entrada entero ").append(input.text()).append('\n');
+    /** Construye una representación legible del árbol para la pestaña Árbol. */
+    private static String arbol(Programa programa) {
+        var resultado = new StringBuilder("Programa\n");
+        for (Token entrada : programa.entradas()) {
+            resultado.append("  Entrada entero ").append(entrada.texto()).append('\n');
         }
-        appendStatements(result, program.statements(), "  ");
-        return result.toString();
+        agregarSentencias(resultado, programa.sentencias(), "  ");
+        return resultado.toString();
     }
 
-    private static void appendStatements(StringBuilder result, List<Stmt> statements, String indent) {
-        for (Stmt statement : statements) {
-            switch (statement) {
-                case Print print -> result.append(indent).append("Mostrar ").append(print.message()).append('\n');
-                case Branch branch -> {
-                    result.append(indent).append("Si\n");
-                    appendExpression(result, branch.condition(), indent + "  ");
-                    result.append(indent).append("Entonces\n");
-                    appendStatements(result, branch.yes(), indent + "  ");
-                    result.append(indent).append("Sino\n");
-                    appendStatements(result, branch.no(), indent + "  ");
+    private static void agregarSentencias(StringBuilder resultado, List<Sentencia> sentencias, String sangria) {
+        for (Sentencia sentencia : sentencias) {
+            switch (sentencia) {
+                case Mostrar mostrar -> resultado.append(sangria).append("Mostrar ").append(mostrar.mensaje()).append('\n');
+                case Condicional condicional -> {
+                    resultado.append(sangria).append("Si\n");
+                    agregarExpresion(resultado, condicional.condicion(), sangria + "  ");
+                    resultado.append(sangria).append("Entonces\n");
+                    agregarSentencias(resultado, condicional.ramaSi(), sangria + "  ");
+                    resultado.append(sangria).append("Sino\n");
+                    agregarSentencias(resultado, condicional.ramaSino(), sangria + "  ");
                 }
             }
         }
     }
 
-    private static void appendExpression(StringBuilder result, Expr expression, String indent) {
-        result.append(indent).append(origin(expression).text()).append('\n');
-        if (expression instanceof Binary binary) {
-            appendExpression(result, binary.left(), indent + "  ");
-            appendExpression(result, binary.right(), indent + "  ");
+    private static void agregarExpresion(StringBuilder resultado, Expresion expresion, String sangria) {
+        resultado.append(sangria).append(origen(expresion).texto()).append('\n');
+        if (expresion instanceof OperacionBinaria operacion) {
+            agregarExpresion(resultado, operacion.izquierda(), sangria + "  ");
+            agregarExpresion(resultado, operacion.derecha(), sangria + "  ");
         }
     }
 
-    private static JTextArea area(String text, boolean editable) {
-        var area = new JTextArea(text);
+    private static JTextArea area(String texto, boolean editable) {
+        var area = new JTextArea(texto);
         area.setEditable(editable);
         area.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 14));
         area.setTabSize(4);
         return area;
     }
 
-    private static JTextArea tab(JTabbedPane tabs, String name) {
-        var view = area("", false);
-        tabs.addTab(name, new JScrollPane(view));
-        return view;
+    private static JTextArea pestana(JTabbedPane pestanas, String nombre) {
+        var vista = area("", false);
+        pestanas.addTab(nombre, new JScrollPane(vista));
+        return vista;
     }
 
-    private static String lines(List<?> items) {
-        var out = new StringJoiner("\n");
-        for (Object item : items) out.add(item.toString());
-        return out.toString();
+    private static JTextPane pestanaOptimizacion(JTabbedPane pestanas) {
+        var vista = Resaltado.panel("", false);
+        pestanas.addTab("Optimización", new JScrollPane(vista));
+        return vista;
     }
 
-    private static final class Window extends JFrame {
-        private final JTextArea editor = area(EXAMPLE, true);
-        private final JTabbedPane tabs = new JTabbedPane();
-        private final JTextArea tokens = tab(tabs, "Tokens");
-        private final JTextArea ast = tab(tabs, "Árbol");
-        private final JTextArea symbols = tab(tabs, "Símbolos");
-        private final JTextArea quads = tab(tabs, "Cuádruplas");
-        private final JTextArea optimized = tab(tabs, "Optimización");
-        private final JTextArea console = tab(tabs, "Salida");
-        private final JButton run = new JButton("Ejecutar");
-        private final JLabel status = new JLabel("  Edita una regla y pulsa Compilar.");
-        private final Map<String,Integer> lastInputs = new HashMap<>(Map.of("promedio", 85, "asistencia", 92));
-        private Compilation current;
+    /** Muestra las operaciones retiradas junto a su sustitución y al código que se ejecutará. */
+    static void mostrarOptimizacion(JTextPane vista, Compilacion resultado) {
+        var texto = new StringBuilder("Método: plegado de constantes\n")
+                .append("Instrucciones: ").append(resultado.original().size())
+                .append(" → ").append(resultado.optimizado().size()).append("\n\n")
+                .append("Cuádruplas eliminadas\n");
+        var intervalos = new ArrayList<int[]>();
+        if (resultado.eliminadas().isEmpty()) texto.append("Ninguna en esta compilación.\n");
+        for (Eliminada eliminada : resultado.eliminadas()) {
+            texto.append("Eliminada: ");
+            int inicio = texto.length();
+            texto.append(eliminada.original());
+            intervalos.add(new int[] { inicio, texto.length() - inicio });
+            texto.append(" → ").append(eliminada.reemplazo()).append('\n');
+        }
+        texto.append("\nCuádruplas optimizadas\n").append(unirLineas(resultado.optimizado()));
+        vista.setText(texto.toString());
+        var estilo = new javax.swing.text.SimpleAttributeSet();
+        javax.swing.text.StyleConstants.setStrikeThrough(estilo, true);
+        for (int[] intervalo : intervalos) {
+            vista.getStyledDocument().setCharacterAttributes(intervalo[0], intervalo[1], estilo, false);
+        }
+    }
 
-        Window() {
+    private static String unirLineas(List<?> elementos) {
+        var union = new StringJoiner("\n");
+        for (Object elemento : elementos) union.add(elemento.toString());
+        return union.toString();
+    }
+
+    private static final class Ventana extends JFrame {
+        private final JTextPane editor = Resaltado.panel(EJEMPLO, true);
+        private final JTextPane tokens = Resaltado.panel("", false);
+        private final JTabbedPane pestanas = new JTabbedPane();
+        {
+            pestanas.addTab("Tokens", new JScrollPane(tokens));
+        }
+        private final JTextArea arbol = pestana(pestanas, "Árbol");
+        private final JTextArea simbolos = pestana(pestanas, "Símbolos");
+        private final JTextArea cuadruplas = pestana(pestanas, "Cuádruplas");
+        private final JTextPane optimizado = pestanaOptimizacion(pestanas);
+        private final JTextArea salida = pestana(pestanas, "Salida");
+        private final JButton ejecutar = new JButton("Ejecutar");
+        private final JLabel estado = new JLabel("  Edita una regla y pulsa Compilar.");
+        private final Map<String,Integer> ultimasEntradas = new HashMap<>(Map.of("promedio", 85, "asistencia", 92));
+        private Compilacion compilacionActual;
+        private final javax.swing.Timer colorear = new javax.swing.Timer(220, evento -> resaltarEditor());
+        private boolean resaltando;
+
+        Ventana() {
             super("BecaScript");
-            var toolbar = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT));
-            var open = new JButton("Abrir…");
-            var save = new JButton("Guardar…");
-            var compile = new JButton("Compilar");
-            for (var button : List.of(open, save, compile, run)) toolbar.add(button);
-            add(toolbar, BorderLayout.NORTH);
-            var split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, new JScrollPane(editor), tabs);
-            split.setResizeWeight(0.5);
-            add(split);
-            add(status, BorderLayout.SOUTH);
-            run.setEnabled(false);
-            open.addActionListener(event -> file(false));
-            save.addActionListener(event -> file(true));
-            compile.addActionListener(event -> build());
-            run.addActionListener(event -> runProgram());
+            var barra = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT));
+            var abrir = new JButton("Abrir…");
+            var guardar = new JButton("Guardar…");
+            var compilar = new JButton("Compilar");
+            for (var boton : List.of(abrir, guardar, compilar, ejecutar)) barra.add(boton);
+            add(barra, BorderLayout.NORTH);
+            var divisor = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, new JScrollPane(editor), pestanas);
+            divisor.setResizeWeight(0.5);
+            add(divisor);
+            add(estado, BorderLayout.SOUTH);
+            ejecutar.setEnabled(false);
+            abrir.addActionListener(evento -> gestionarArchivo(false));
+            guardar.addActionListener(evento -> gestionarArchivo(true));
+            compilar.addActionListener(evento -> compilarEditor());
+            ejecutar.addActionListener(evento -> ejecutarPrograma());
             editor.getDocument().addDocumentListener(new DocumentListener() {
-                public void insertUpdate(DocumentEvent event) { invalidateCompilation(); }
-                public void removeUpdate(DocumentEvent event) { invalidateCompilation(); }
-                public void changedUpdate(DocumentEvent event) { invalidateCompilation(); }
+                public void insertUpdate(DocumentEvent evento) { cambioFuente(); }
+                public void removeUpdate(DocumentEvent evento) { cambioFuente(); }
+                public void changedUpdate(DocumentEvent evento) { }
             });
+            colorear.setRepeats(false);
+            colorear.start();
             setDefaultCloseOperation(EXIT_ON_CLOSE);
             setSize(1030, 580);
             setLocationRelativeTo(null);
         }
 
-        private void invalidateCompilation() {
-            current = null;
-            run.setEnabled(false);
-            for (var view : List.of(tokens, ast, symbols, quads, optimized, console)) view.setText("");
-            status.setText("  Código modificado. Pulsa Compilar.");
+        private void cambioFuente() {
+            invalidarCompilacion();
+            colorear.restart();
         }
 
-        private void file(boolean save) {
-            var chooser = new JFileChooser();
-            int selected = save ? chooser.showSaveDialog(this) : chooser.showOpenDialog(this);
-            if (selected != JFileChooser.APPROVE_OPTION) return;
-            Path path = chooser.getSelectedFile().toPath();
-            try {
-                if (save) {
-                    if (Files.exists(path) && JOptionPane.showConfirmDialog(this,
-                            "¿Reemplazar " + path.getFileName() + "?", "Guardar",
-                            JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) return;
-                    Files.writeString(path, editor.getText());
-                    status.setText("  Guardado " + path.getFileName());
-                } else {
-                    editor.setText(Files.readString(path));
+        // Pygments trabaja fuera del hilo de Swing para mantener el editor disponible.
+        private void resaltarEditor() {
+            if (resaltando) return;
+            String fuente = editor.getText();
+            resaltando = true;
+            new SwingWorker<List<Resaltado.Tramo>, Void>() {
+                @Override protected List<Resaltado.Tramo> doInBackground() throws Exception {
+                    return Resaltado.analizar(fuente);
                 }
-            } catch (java.io.IOException error) {
-                JOptionPane.showMessageDialog(this, error.getMessage(), "Archivo", JOptionPane.ERROR_MESSAGE);
-            }
+
+                @Override protected void done() {
+                    resaltando = false;
+                    try {
+                        var tramos = get();
+                        if (fuente.equals(editor.getText())) Resaltado.pintar(editor, tramos);
+                        editor.setToolTipText(null);
+                    } catch (java.util.concurrent.ExecutionException excepcion) {
+                        editor.setToolTipText("Resaltado no disponible. Comprueba Python y lib/pygments-2.20.0.jar.");
+                    } catch (InterruptedException excepcion) {
+                        Thread.currentThread().interrupt();
+                    }
+                    if (!fuente.equals(editor.getText())) colorear.restart();
+                }
+            }.execute();
         }
 
-        private void build() {
-            invalidateCompilation();
+        // Una edición invalida las vistas y la ejecución hasta volver a compilar.
+        private void invalidarCompilacion() {
+            compilacionActual = null;
+            ejecutar.setEnabled(false);
+            for (var vista : List.of(tokens, arbol, simbolos, cuadruplas, optimizado, salida)) vista.setText("");
+            estado.setText("  Código modificado. Pulsa Compilar.");
+        }
+
+        private void gestionarArchivo(boolean guardar) {
+            var selector = new JFileChooser();
+            int seleccion = guardar ? selector.showSaveDialog(this) : selector.showOpenDialog(this);
+            if (seleccion != JFileChooser.APPROVE_OPTION) return;
+            Path ruta = selector.getSelectedFile().toPath();
             try {
-                current = compile(editor.getText());
-                tokens.setText(lines(current.tokens()));
-                ast.setText(tree(current.program()));
-                var table = new StringJoiner("\n");
-                current.symbols().forEach((name, input) -> table.add(name + "  entero  " + input.pos()));
-                symbols.setText(table.toString());
-                quads.setText(lines(current.plain()));
-                optimized.setText(current.plain().size() + " → " + current.optimized().size()
-                        + " instrucciones\n\n" + lines(current.optimized()));
-                for (var view : List.of(tokens, ast, symbols, quads, optimized)) view.setCaretPosition(0);
-                tabs.setSelectedIndex(0);
-                status.setText("  Compilación correcta. Puedes ejecutar la regla.");
-                run.setEnabled(true);
-            } catch (Exception error) {
-                console.setText(error.getMessage());
-                tabs.setSelectedIndex(5);
-                status.setText("  Corrige el error y vuelve a compilar.");
+                if (guardar) {
+                    if (Files.exists(ruta) && JOptionPane.showConfirmDialog(this,
+                            "¿Reemplazar " + ruta.getFileName() + "?", "Guardar",
+                            JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) return;
+                    Files.writeString(ruta, editor.getText());
+                    estado.setText("  Guardado " + ruta.getFileName());
+                } else {
+                    editor.setText(Files.readString(ruta));
+                }
+            } catch (java.io.IOException excepcion) {
+                JOptionPane.showMessageDialog(this, excepcion.getMessage(), "Archivo", JOptionPane.ERROR_MESSAGE);
             }
         }
 
-        private void runProgram() {
-            var fields = new LinkedHashMap<String,JTextField>();
+        private void compilarEditor() {
+            invalidarCompilacion();
+            try {
+                compilacionActual = compilar(editor.getText());
+                Resaltado.pintarTokens(tokens, compilacionActual.tokens());
+                arbol.setText(arbol(compilacionActual.programa()));
+                var tabla = new StringJoiner("\n");
+                compilacionActual.simbolos().forEach((nombre, entrada) -> tabla.add(nombre + "  entero  " + entrada.posicion()));
+                simbolos.setText(tabla.toString());
+                cuadruplas.setText(unirLineas(compilacionActual.original()));
+                mostrarOptimizacion(optimizado, compilacionActual);
+                for (var vista : List.of(tokens, arbol, simbolos, cuadruplas, optimizado)) vista.setCaretPosition(0);
+                pestanas.setSelectedIndex(0);
+                estado.setText("  Compilación correcta. Puedes ejecutar la regla.");
+                ejecutar.setEnabled(true);
+            } catch (Exception excepcion) {
+                salida.setText(excepcion.getMessage());
+                pestanas.setSelectedIndex(5);
+                estado.setText("  Corrige el error y vuelve a compilar.");
+            }
+        }
+
+        private void ejecutarPrograma() {
+            var campos = new LinkedHashMap<String,JTextField>();
             var panel = new JPanel(new GridLayout(0, 2, 8, 8));
-            current.symbols().keySet().forEach(name -> {
-                var field = new JTextField(Integer.toString(lastInputs.getOrDefault(name, 0)), 10);
-                var label = new JLabel(name);
-                label.setLabelFor(field);
-                panel.add(label);
-                panel.add(field);
-                fields.put(name, field);
+            compilacionActual.simbolos().keySet().forEach(nombre -> {
+                var campo = new JTextField(Integer.toString(ultimasEntradas.getOrDefault(nombre, 0)), 10);
+                var etiqueta = new JLabel(nombre);
+                etiqueta.setLabelFor(campo);
+                panel.add(etiqueta);
+                panel.add(campo);
+                campos.put(nombre, campo);
             });
-            if (!fields.isEmpty() && JOptionPane.showConfirmDialog(this, panel, "Datos de entrada",
+            if (!campos.isEmpty() && JOptionPane.showConfirmDialog(this, panel, "Datos de entrada",
                     JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) != JOptionPane.OK_OPTION) return;
-            var inputs = new LinkedHashMap<String,Integer>();
-            for (var entry : fields.entrySet()) {
+            var entradas = new LinkedHashMap<String,Integer>();
+            for (var entrada : campos.entrySet()) {
                 try {
-                    inputs.put(entry.getKey(), Integer.parseInt(entry.getValue().getText().trim()));
-                } catch (NumberFormatException error) {
-                    JOptionPane.showMessageDialog(this, "Ingresa un entero para " + entry.getKey(),
+                    entradas.put(entrada.getKey(), Integer.parseInt(entrada.getValue().getText().trim()));
+                } catch (NumberFormatException excepcion) {
+                    JOptionPane.showMessageDialog(this, "Ingresa un entero para " + entrada.getKey(),
                             "Entrada inválida", JOptionPane.ERROR_MESSAGE);
                     return;
                 }
             }
-            lastInputs.putAll(inputs);
-            String message = execute(current.optimized(), inputs);
-            console.setText(message.isEmpty() ? "(Sin mensajes)" : message);
-            tabs.setSelectedIndex(5);
+            ultimasEntradas.putAll(entradas);
+            String mensaje = ejecutar(compilacionActual.optimizado(), entradas);
+            salida.setText(mensaje.isEmpty() ? "(Sin mensajes)" : mensaje);
+            pestanas.setSelectedIndex(5);
         }
     }
 
-    public static void main(String[] args) throws Exception {
-        if (args.length == 0) {
-            SwingUtilities.invokeLater(() -> new Window().setVisible(true));
+    /** Abre Swing o ejecuta el modo de consola según los argumentos recibidos. */
+    public static void main(String[] argumentos) throws Exception {
+        if (argumentos.length == 0) {
+            SwingUtilities.invokeLater(() -> new Ventana().setVisible(true));
             return;
         }
-        if (args.length == 1 && args[0].equals("--verificar")) {
-            verify();
+        if (argumentos.length == 1 && argumentos[0].equals("--verificar")) {
+            verificar();
             return;
         }
-        Compilation compilation = compile(Files.readString(Path.of(args[0])));
-        var inputs = new LinkedHashMap<String,Integer>();
-        for (int i = 1; i < args.length; i++) {
-            String[] pair = args[i].split("=", 2);
-            if (pair.length != 2 || !compilation.symbols().containsKey(pair[0])
-                    || inputs.putIfAbsent(pair[0], Integer.parseInt(pair[1])) != null) {
-                throw new IllegalArgumentException("Entrada desconocida, duplicada o inválida: " + args[i]);
+        Compilacion compilacion = compilar(Files.readString(Path.of(argumentos[0])));
+        var entradas = new LinkedHashMap<String,Integer>();
+        for (int indice = 1; indice < argumentos.length; indice++) {
+            String[] par = argumentos[indice].split("=", 2);
+            if (par.length != 2 || !compilacion.simbolos().containsKey(par[0])
+                    || entradas.putIfAbsent(par[0], Integer.parseInt(par[1])) != null) {
+                throw new IllegalArgumentException("Entrada desconocida, duplicada o inválida: " + argumentos[indice]);
             }
         }
-        if (!inputs.keySet().equals(compilation.symbols().keySet())) {
-            throw new IllegalArgumentException("Entradas requeridas: " + compilation.symbols().keySet());
+        if (!entradas.keySet().equals(compilacion.simbolos().keySet())) {
+            throw new IllegalArgumentException("Entradas requeridas: " + compilacion.simbolos().keySet());
         }
-        System.out.println(execute(compilation.optimized(), inputs));
+        System.out.println(ejecutar(compilacion.optimizado(), entradas));
     }
 
-    private static void verify() throws Exception {
-        var compiled = compile(EXAMPLE);
-        if (compiled.optimized().size() >= compiled.plain().size()) throw new AssertionError("Optimización");
-        for (int[] values : new int[][] {{85,92,1},{85,87,0},{80,90,1},{79,90,0}}) {
-            var inputs = Map.of("promedio", values[0], "asistencia", values[1]);
-            String expected = values[2] == 1 ? "Beca aprobada" : "Beca rechazada";
-            if (!expected.equals(execute(compiled.plain(), inputs))
-                    || !expected.equals(execute(compiled.optimized(), inputs))) throw new AssertionError(inputs);
+    // Compara la salida original y optimizada y comprueba diagnósticos de las tres fases.
+    private static void verificar() throws Exception {
+        var compilado = compilar(EJEMPLO);
+        if (compilado.optimizado().size() >= compilado.original().size()) throw new AssertionError("Optimización");
+        for (int[] valores : new int[][] {{85,92,1},{85,87,0},{80,90,1},{79,90,0}}) {
+            var entradas = Map.of("promedio", valores[0], "asistencia", valores[1]);
+            String esperado = valores[2] == 1 ? "Beca aprobada" : "Beca rechazada";
+            if (!esperado.equals(ejecutar(compilado.original(), entradas))
+                    || !esperado.equals(ejecutar(compilado.optimizado(), entradas))) throw new AssertionError(entradas);
         }
-        expectFailure(EXAMPLE.replace(">= 90", "@ 90"), "Léxico");
-        expectFailure(EXAMPLE.substring(0, EXAMPLE.lastIndexOf('}')), "Sintáctico");
-        expectFailure(EXAMPLE.replace("asistencia >= 90", "asistensia >= 90"), "Semántico");
-        expectFailure("entrada entero x; entrada entero x;", "Semántico");
-        expectFailure("si (2 + 3) {} sino {}", "Semántico");
+        comprobarError(EJEMPLO.replace(">= 90", "@ 90"), "Léxico");
+        comprobarError(EJEMPLO.substring(0, EJEMPLO.lastIndexOf('}')), "Sintáctico");
+        comprobarError(EJEMPLO.replace("asistencia >= 90", "asistensia >= 90"), "Semántico");
+        comprobarError("entrada entero x; entrada entero x;", "Semántico");
+        comprobarError("si (2 + 3) {} sino {}", "Semántico");
         System.out.println("Verificación correcta: 4 casos de ejecución y 5 errores.");
     }
 
-    private static void expectFailure(String source, String phase) throws Exception {
+    private static void comprobarError(String fuente, String fase) throws Exception {
         try {
-            compile(source);
-        } catch (Failure error) {
-            if (error.getMessage().startsWith(phase)) return;
-            throw error;
+            compilar(fuente);
+        } catch (ErrorCompilacion excepcion) {
+            if (excepcion.getMessage().startsWith(fase)) return;
+            throw excepcion;
         }
-        throw new AssertionError("Faltó el error " + phase);
+        throw new AssertionError("Faltó el error " + fase);
     }
 }

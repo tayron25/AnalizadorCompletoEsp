@@ -7,41 +7,43 @@ import java_cup.runtime.Symbol;
 %line
 %column
 %{
+    // La lista conserva el tipo, el lexema y la posición para la vista Tokens.
     final java.util.List<String> tokens = new java.util.ArrayList<>();
-    private Symbol token(int kind) {
-        var value = new Main.Tok(yytext(), yyline + 1, yycolumn + 1);
-        tokens.add(value.pos() + "  " + Main.tokenName(kind) + "  " + value.text());
-        return new Symbol(kind, yyline + 1, yycolumn + 1, value);
+    private Symbol ficha(int tipoToken) {
+        var valor = new Main.Token(yytext(), yyline + 1, yycolumn + 1);
+        tokens.add(valor.posicion() + "  " + Main.nombreToken(tipoToken) + "  " + valor.texto());
+        return new Symbol(tipoToken, yyline + 1, yycolumn + 1, valor);
     }
 %}
 %eofval{
     return new Symbol(sym.EOF, yyline + 1, yycolumn + 1, null);
 %eofval}
 %%
+// Los espacios y comentarios se omiten. Las palabras reservadas preceden al identificador.
 [ \t\r\n]+ {}
 "//"[^\r\n]* {}
-"entrada" { return token(sym.ENTRADA); }
-"entero" { return token(sym.ENTERO); }
-"si" { return token(sym.SI); }
-"sino" { return token(sym.SINO); }
-"mostrar" { return token(sym.MOSTRAR); }
-"y" { return token(sym.Y); }
-"o" { return token(sym.O); }
-"(" { return token(sym.LP); }
-")" { return token(sym.RP); }
-"{" { return token(sym.LB); }
-"}" { return token(sym.RB); }
-";" { return token(sym.SEMI); }
-">=" { return token(sym.GE); }
-"<=" { return token(sym.LE); }
-"==" { return token(sym.EQ); }
-"!=" { return token(sym.NE); }
-">" { return token(sym.GT); }
-"<" { return token(sym.LT); }
-"+" { return token(sym.PLUS); }
-"-" { return token(sym.MINUS); }
-"*" { return token(sym.TIMES); }
-[a-zA-Z_][a-zA-Z_0-9]* { return token(sym.ID); }
-[0-9]+ { return token(sym.NUM); }
-\"[^\"\r\n]*\" { return token(sym.STR); }
-[^] { throw new Main.Failure("Léxico", yyline + 1, yycolumn + 1, "Carácter inválido: " + yytext()); }
+"entrada" { return ficha(sym.ENTRADA); }
+"entero" { return ficha(sym.ENTERO); }
+"si" { return ficha(sym.SI); }
+"sino" { return ficha(sym.SINO); }
+"mostrar" { return ficha(sym.MOSTRAR); }
+"y" { return ficha(sym.Y); }
+"o" { return ficha(sym.O); }
+"(" { return ficha(sym.PARENTESIS_ABIERTO); }
+")" { return ficha(sym.PARENTESIS_CERRADO); }
+"{" { return ficha(sym.LLAVE_ABIERTA); }
+"}" { return ficha(sym.LLAVE_CERRADA); }
+";" { return ficha(sym.PUNTO_Y_COMA); }
+">=" { return ficha(sym.MAYOR_O_IGUAL); }
+"<=" { return ficha(sym.MENOR_O_IGUAL); }
+"==" { return ficha(sym.IGUAL); }
+"!=" { return ficha(sym.DISTINTO); }
+">" { return ficha(sym.MAYOR); }
+"<" { return ficha(sym.MENOR); }
+"+" { return ficha(sym.SUMA); }
+"-" { return ficha(sym.RESTA); }
+"*" { return ficha(sym.MULTIPLICACION); }
+[a-zA-Z_][a-zA-Z_0-9]* { return ficha(sym.IDENTIFICADOR); }
+[0-9]+ { return ficha(sym.LITERAL_ENTERO); }
+\"[^\"\r\n]*\" { return ficha(sym.CADENA); }
+[^] { throw new Main.ErrorCompilacion("Léxico", yyline + 1, yycolumn + 1, "Carácter inválido: " + yytext()); }

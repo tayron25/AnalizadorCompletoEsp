@@ -10,6 +10,8 @@ from pygments.token import Comment, Keyword, Name, Number, Operator, Punctuation
 
 
 # Esta gramática visual tolera texto incompleto mientras se escribe en el editor.
+# Estas reglas se usan para pintar, incluso antes de compilar. La entrada oficial de CUP viene de JFlex.
+# La frontera de palabra evita colorear como reservada la primera parte de un identificador más largo.
 class LexerBeca(RegexLexer):
     tokens = {
         "root": [
@@ -25,12 +27,15 @@ class LexerBeca(RegexLexer):
     }
 
 
+# La interfaz recibe texto UTF-8. Seguimos su posición original y mandamos solo los intervalos con estilo.
 def generar_intervalos():
     fuente = sys.stdin.buffer.read().decode("utf-8")
     posicion = 0
+    # get_tokens_unprocessed mantiene la entrada original, incluidas sus tabulaciones y saltos de línea.
     for _, ficha, lexema in LexerBeca().get_tokens_unprocessed(fuente):
         # Python cuenta caracteres Unicode y Swing usa unidades UTF-16.
         longitud = len(lexema.encode("utf-16-le")) // 2
+        # Los blancos avanzan la posición, pero se quedan con el color predeterminado.
         if ficha not in Text:
             categoria = "Number" if ficha in Number else "String" if ficha in String else str(ficha).split(".")[1]
             print(f"{posicion}\t{longitud}\t{categoria}")

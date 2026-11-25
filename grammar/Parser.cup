@@ -11,6 +11,7 @@ parser code {:
 :};
 
 // Los terminales son los tipos de token que entrega JFlex.
+// Los no terminales describen estructuras completas que se construyen a partir de esos tokens.
 terminal Main.Token ENTRADA, ENTERO, SI, SINO, MOSTRAR, Y, O, PARENTESIS_ABIERTO, PARENTESIS_CERRADO, LLAVE_ABIERTA, LLAVE_CERRADA, PUNTO_Y_COMA, MAYOR_O_IGUAL, MENOR_O_IGUAL, IGUAL, DISTINTO, MAYOR, MENOR, SUMA, RESTA, MULTIPLICACION, IDENTIFICADOR, LITERAL_ENTERO, CADENA;
 non terminal Main.Programa programa;
 non terminal ArrayList entradas, sentencias;
@@ -19,20 +20,27 @@ non terminal Main.Expresion expresion;
 // CUP ordena estas precedencias de menor a mayor.
 precedence left O;
 precedence left Y;
+// Las comparaciones son no asociativas: 1 < 2 < 3 necesita separarse en dos comparaciones con «y».
 precedence nonassoc MAYOR_O_IGUAL, MENOR_O_IGUAL, IGUAL, DISTINTO, MAYOR, MENOR;
 precedence left SUMA, RESTA;
 precedence left MULTIPLICACION;
 start with programa;
 
 // Cada acción de Java construye un nodo o agrega elementos al árbol.
+// Los nombres después de «:» son variables de la acción Java.
+// RESULT es el valor que CUP devuelve al reducir la producción.
 programa ::= entradas:declaraciones sentencias:lista {: RESULT = new Main.Programa(declaraciones, lista); :};
+// El programa admite cero o más declaraciones al inicio. La alternativa vacía inicia la lista.
 entradas ::= entradas:declaraciones ENTRADA ENTERO IDENTIFICADOR:nombre PUNTO_Y_COMA {: declaraciones.add(nombre); RESULT = declaraciones; :}
          | {: RESULT = new ArrayList(); :};
+// Una lista de sentencias también puede quedar vacía. Eso permite un sino sin acciones.
 sentencias ::= sentencias:lista sentencia:nodo {: lista.add(nodo); RESULT = lista; :}
              | {: RESULT = new ArrayList(); :};
 // La sentencia si necesita las dos ramas. Sus bloques pueden contener otras sentencias.
 sentencia ::= SI PARENTESIS_ABIERTO expresion:condicion PARENTESIS_CERRADO LLAVE_ABIERTA sentencias:primero LLAVE_CERRADA SINO LLAVE_ABIERTA sentencias:segundo LLAVE_CERRADA {: RESULT = new Main.Condicional(condicion, primero, segundo); :}
             | MOSTRAR CADENA:cadena PUNTO_Y_COMA {: RESULT = new Main.Mostrar(cadena.texto().substring(1, cadena.texto().length()-1)); :};
+// Las operaciones crean nodos binarios. Los paréntesis se usan para agrupar, pero devuelven
+// directamente el nodo interior. Los números y las referencias quedan como hojas.
 expresion ::= expresion:primero O:operador expresion:segundo {: RESULT = new Main.OperacionBinaria(primero, operador, segundo); :}
        | expresion:primero Y:operador expresion:segundo {: RESULT = new Main.OperacionBinaria(primero, operador, segundo); :}
        | expresion:primero MAYOR_O_IGUAL:operador expresion:segundo {: RESULT = new Main.OperacionBinaria(primero, operador, segundo); :}

@@ -24,9 +24,21 @@ El script genera el lexer y el parser desde `grammar/` antes de compilar. Para a
 
 1. Abre el editor. La regla académica ya está cargada y también está disponible en `ejemplos/beca-academica.beca`.
 2. Pulsa **Compilar**. Revisa los tokens, el árbol, la tabla de símbolos y las cuádruplas.
-3. En **Optimización**, observa cómo el compilador calcula `40 + 40` y usa `80` directamente, eliminando una instrucción.
+3. En **Optimización**, busca una cuádrupla tachada por cada método. Se calcula `40 + 40`, se reutiliza la comparación `promedio >= 80` y se elimina el salto sobre el `sino` vacío de la mención por excelencia.
 4. Pulsa **Ejecutar** con promedio 85 y asistencia 92. La salida será «Beca aprobada». Cambia la asistencia a 87 y ejecuta otra vez para obtener «Beca rechazada».
 5. Cambia el mínimo de promedio a `90` y vuelve a compilar. Luego cambia `asistencia` a `asistensia` dentro de la condición y vuelve a compilar para ver el diagnóstico semántico.
+
+## Demostrar los tres métodos de optimización
+
+La regla inicial ya demuestra los tres métodos de la Unidad 5. Si el estudiante cumple la regla y tiene promedio de al menos 95, también se muestra «Mención por excelencia». Para ver una segunda demostración, abre `ejemplos/optimizaciones.beca` y pulsa **Compilar**. La pestaña **Optimización** indica cuántas cuádruplas eliminó cada método. Cada instrucción retirada aparece tachada con su motivo.
+
+| Método | Qué hace en el ejemplo |
+| --- | --- |
+| Plegado de constantes (5.3) | Calcula `80 + 80` durante la compilación. |
+| Eliminación de redundancias (5.4) | Reutiliza el temporal de `promedio * 2` dentro de la misma condición. |
+| Optimización por mirilla (5.8) | Elimina el salto al final del condicional porque la rama `sino` está vacía y solo hay etiquetas hasta el destino. |
+
+Con promedio 85 y asistencia 92 se muestran «Cumple los requisitos» y «Evaluación terminada». Con promedio 85 y asistencia 87 solo se muestra «Evaluación terminada». El verificador compara la salida del código original y del optimizado y comprueba que se aplique cada método.
 
 ## Recorrido del código para la defensa
 

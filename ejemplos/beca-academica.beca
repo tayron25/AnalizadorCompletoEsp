@@ -1,9 +1,15 @@
-// Regla ficticia para la defensa
+// Regla ficticia para demostrar los tres métodos de optimización.
 entrada entero promedio;
 entrada entero asistencia;
 
-si (promedio >= (40 + 40) y asistencia >= 90) {
+// La comparación del promedio se repite a propósito.
+si (promedio >= (40 + 40) y promedio >= 80 y asistencia >= 90) {
     mostrar "Beca aprobada";
+    si (promedio >= 95) {
+        mostrar "Mención por excelencia";
+    } sino {
+        // No se imprime una mención cuando el promedio es menor a 95.
+    }
 } sino {
     mostrar "Beca rechazada";
 }

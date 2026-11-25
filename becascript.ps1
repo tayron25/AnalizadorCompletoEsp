@@ -1,9 +1,11 @@
+# build compila; run abre el editor; verify prueba el compilador; example ejecuta una regla de muestra.
 param(
     [ValidateSet('build', 'run', 'verify', 'example')]
     [Alias('Action')]
     [string]$Accion = 'run'
 )
 
+# Las rutas salen de la carpeta de este script, no de la carpeta actual de la terminal.
 $ErrorActionPreference = 'Stop'
 $raiz = $PSScriptRoot
 $bibliotecas = Join-Path $raiz 'lib'
@@ -12,6 +14,7 @@ $jflex = Join-Path $bibliotecas 'JFlex.jar'
 $generados = Join-Path $raiz 'build/becascript/generated'
 $clases = Join-Path $raiz 'build/becascript/classes'
 
+# Detenemos el proceso si falla cualquiera de los generadores o el compilador de Java.
 function Invocar-Jdk {
     param([string]$Ejecutable, [string[]]$Argumentos)
     & $Ejecutable @Argumentos
@@ -28,6 +31,7 @@ New-Item -ItemType Directory -Force $clases | Out-Null
 # Las especificaciones generan las clases que se compilan con el codigo de BecaScript.
 Invocar-Jdk java @('-cp', $cup, 'java_cup.Main', '-destdir', $generados, '-parser', 'Parser', (Join-Path $raiz 'grammar/Parser.cup'))
 Invocar-Jdk java @('-jar', $jflex, '--nobak', '-d', $generados, (Join-Path $raiz 'grammar/Lexer.flex'))
+# Compilamos archivos generados y fuentes propias. CUP tambien aporta las clases de su runtime.
 $fuentes = Get-ChildItem -LiteralPath $generados -Filter '*.java' |
     Select-Object -ExpandProperty FullName
 Invocar-Jdk javac (@('-encoding', 'UTF-8', '-cp', $cup, '-d', $clases) + @($fuentes) +

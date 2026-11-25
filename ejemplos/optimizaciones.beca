@@ -1,0 +1,10 @@
+// Los tres métodos de la Unidad 5 en una regla.
+entrada entero promedio;
+entrada entero asistencia;
+
+si (promedio * 2 >= (80 + 80) y promedio * 2 <= 200 y asistencia >= 90) {
+    mostrar "Cumple los requisitos";
+} sino {
+    // Al estar vacía esta rama, basta avanzar hasta la etiqueta final.
+}
+mostrar "Evaluación terminada";
